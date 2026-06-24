@@ -1,0 +1,6 @@
+{
+  "name": "ABC Yarn House",
+  "description": "A professional yarn business ledger and inventory management system with automated khatian (running balance) calculations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
