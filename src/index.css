@@ -12,4 +12,14 @@
   .bengali-text {
     font-family: var(--font-bengali), var(--font-sans);
   }
+  
+  @keyframes scan {
+    0% { transform: translateY(0); }
+    50% { transform: translateY(350px); }
+    100% { transform: translateY(0); }
+  }
+
+  .animate-scan-line {
+    animation: scan 3s ease-in-out infinite;
+  }
 }

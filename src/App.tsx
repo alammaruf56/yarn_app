@@ -21,14 +21,21 @@ import {
   RefreshCw,
   Plus,
   Check,
-  X
+  X,
+  RotateCcw,
+  UploadCloud,
+  FileImage,
+  Brain,
+  Sparkles,
+  Camera,
+  AlertCircle
 } from "lucide-react";
 import { Party, Yarn, Transaction, DashboardStats } from "./types";
 
 export default function App() {
   // Navigation / Tabs
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "purchase" | "sales" | "supplier_ledger" | "customer_ledger" | "directory" | "inventory" | "history"
+    "dashboard" | "purchase" | "sales" | "product_return" | "supplier_ledger" | "customer_ledger" | "directory" | "inventory" | "history" | "dues"
   >("dashboard");
 
   // Core Application State
@@ -49,6 +56,7 @@ export default function App() {
   const [partySearchQuery, setPartySearchQuery] = useState("");
   const [yarnSearchQuery, setYarnSearchQuery] = useState("");
   const [txSearchQuery, setTxSearchQuery] = useState("");
+  const [duesSearchQuery, setDuesSearchQuery] = useState("");
   const [txTypeFilter, setTxTypeFilter] = useState("all");
   const [txPartyFilter, setTxPartyFilter] = useState("all");
   const [txDateFrom, setTxDateFrom] = useState("");
@@ -71,6 +79,27 @@ export default function App() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentParticulars, setPaymentParticulars] = useState("Cash Receipt");
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split("T")[0]);
+
+  // AI OCR Hand-Note Scanner States
+  const [scanImage, setScanImage] = useState<string | null>(null);
+  const [scanImageName, setScanImageName] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<any | null>(null);
+
+  // Transaction Edit Modal States
+  const [editingTransaction, setEditingTransaction] = useState<any | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({
+    date: "",
+    particulars: "",
+    debit: "",
+    credit: "",
+    quantity: "",
+    rate: "",
+    entry_type: "" as any,
+  });
 
   // Form States: Purchase Entry
   const [purchaseForm, setPurchaseForm] = useState({
@@ -110,6 +139,49 @@ export default function App() {
     labour: "",
     payment: "",
     payment_method: "Cash Receipt",
+  });
+
+  // Payment Type helper states for Purchase form
+  const [purchasePayType, setPurchasePayType] = useState<"cash" | "bank">("cash");
+  const [purchaseBankType, setPurchaseBankType] = useState<"Bank Check" | "Fund Transfer">("Bank Check");
+  const [purchaseBankName, setPurchaseBankName] = useState("");
+
+  // Payment Type helper states for Sales form
+  const [salesPayType, setSalesPayType] = useState<"cash" | "bank">("cash");
+  const [salesBankType, setSalesBankType] = useState<"Bank Check" | "Fund Transfer">("Bank Check");
+  const [salesBankName, setSalesBankName] = useState("");
+
+  // Payment Type helper states for Post Payment modal
+  const [modalDirection, setModalDirection] = useState<"receipt" | "payment">("receipt");
+  const [modalPayType, setModalPayType] = useState<"cash" | "bank">("cash");
+  const [modalBankType, setModalBankType] = useState<"Bank Check" | "Fund Transfer">("Bank Check");
+  const [modalBankName, setModalBankName] = useState("");
+
+  useEffect(() => {
+    if (paymentPartyId) {
+      const p = parties.find((party) => party.id === paymentPartyId);
+      if (p) {
+        setModalDirection(p.type === "supplier" ? "payment" : "receipt");
+      }
+    }
+  }, [paymentPartyId, parties]);
+
+  // Form States: Product Return Entry
+  const [returnForm, setReturnForm] = useState({
+    date: new Date().toISOString().split("T")[0],
+    party_type: "customer" as "supplier" | "customer",
+    party_name: "",
+    party_id: "",
+    party_phone: "",
+    party_address: "",
+    yarn_name: "",
+    yarn_id: "",
+    yarn_count: "",
+    yarn_blend: "",
+    unit: "KG" as "KG" | "LBS" | "BAG",
+    quantity: "",
+    rate: "",
+    reason: "",
   });
 
   // Auto-Suggest Dropdown States
@@ -175,6 +247,226 @@ export default function App() {
   };
 
   // -----------------------------------------
+  // AI OCR HAND-NOTE SCANNER HANDLERS
+  // -----------------------------------------
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const processFile = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setScanError("Please upload an image file (PNG, JPG, JPEG, WEBP).");
+      return;
+    }
+    setScanImageName(file.name);
+    setScanError(null);
+    setScanResult(null);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setScanImage(reader.result as string);
+    };
+    reader.onerror = () => {
+      setScanError("Failed to read image file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleScanWithAI = async () => {
+    if (!scanImage) return;
+    setIsScanning(true);
+    setScanError(null);
+    setScanResult(null);
+
+    try {
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ image: scanImage }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "An error occurred during scanning.");
+      }
+      setScanResult(data);
+    } catch (err: any) {
+      console.error(err);
+      setScanError(err.message || "Failed to analyze handwritten note with Gemini.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleAutofill = (result: any) => {
+    if (!result) return;
+    const entryType = result.entry_type || "sales";
+    
+    // Find matching party in local state
+    let matchedParty = parties.find(
+      (p) => p.name.toLowerCase() === (result.party_name || "").toLowerCase().trim()
+    );
+    if (!matchedParty && result.party_name) {
+      matchedParty = parties.find((p) =>
+        p.name.toLowerCase().includes(result.party_name.toLowerCase())
+      );
+    }
+
+    // Find matching yarn in local state
+    let matchedYarn = yarns.find(
+      (y) => y.name.toLowerCase() === (result.yarn_name || "").toLowerCase().trim()
+    );
+    if (!matchedYarn && result.yarn_name) {
+      matchedYarn = yarns.find((y) =>
+        y.name.toLowerCase().includes(result.yarn_name.toLowerCase())
+      );
+    }
+
+    const dateValue = result.date || new Date().toISOString().split("T")[0];
+
+    if (entryType === "purchase" || result.party_type === "supplier") {
+      setPurchaseForm({
+        date: dateValue,
+        supplier_name: matchedParty ? matchedParty.name : (result.party_name || ""),
+        supplier_id: matchedParty ? matchedParty.id : "",
+        supplier_phone: matchedParty ? matchedParty.phone : "",
+        supplier_address: matchedParty ? matchedParty.address : "",
+        yarn_name: matchedYarn ? matchedYarn.name : (result.yarn_name || ""),
+        yarn_id: matchedYarn ? matchedYarn.id : "",
+        yarn_count: result.yarn_count || "",
+        yarn_blend: result.yarn_blend || "",
+        unit: (result.unit || "KG") as "KG" | "LBS" | "BAG",
+        quantity: result.quantity ? String(result.quantity) : "",
+        rate: result.rate ? String(result.rate) : "",
+        car_rent: result.car_rent ? String(result.car_rent) : "",
+        labour: result.labour ? String(result.labour) : "",
+        payment: result.payment ? String(result.payment) : "",
+        payment_method: result.payment_method || "Cash Payment",
+      });
+      setActiveTab("purchase");
+    } else if (entryType === "return") {
+      setReturnForm({
+        date: dateValue,
+        party_type: (result.party_type || "customer") as "supplier" | "customer",
+        party_name: matchedParty ? matchedParty.name : (result.party_name || ""),
+        party_id: matchedParty ? matchedParty.id : "",
+        party_phone: matchedParty ? matchedParty.phone : "",
+        party_address: matchedParty ? matchedParty.address : "",
+        yarn_name: matchedYarn ? matchedYarn.name : (result.yarn_name || ""),
+        yarn_id: matchedYarn ? matchedYarn.id : "",
+        yarn_count: result.yarn_count || "",
+        yarn_blend: result.yarn_blend || "",
+        unit: (result.unit || "KG") as "KG" | "LBS" | "BAG",
+        quantity: result.quantity ? String(result.quantity) : "",
+        rate: result.rate ? String(result.rate) : "",
+        reason: result.reason || "",
+      });
+      setActiveTab("product_return");
+    } else if (entryType === "payment") {
+      setPaymentPartyId(matchedParty ? matchedParty.id : "");
+      setPaymentAmount(result.payment ? String(result.payment) : "");
+      setPaymentParticulars(result.payment_method ? `${result.payment_method} Receipt` : "Cash Receipt");
+      setPaymentDate(dateValue);
+      setShowPaymentModal(true);
+      if (matchedParty) {
+        if (matchedParty.type === "supplier") setActiveTab("supplier_ledger");
+        else setActiveTab("customer_ledger");
+      } else {
+        setActiveTab("customers");
+      }
+    } else {
+      setSalesForm({
+        date: dateValue,
+        customer_name: matchedParty ? matchedParty.name : (result.party_name || ""),
+        customer_id: matchedParty ? matchedParty.id : "",
+        customer_phone: matchedParty ? matchedParty.phone : "",
+        customer_address: matchedParty ? matchedParty.address : "",
+        yarn_name: matchedYarn ? matchedYarn.name : (result.yarn_name || ""),
+        yarn_id: matchedYarn ? matchedYarn.id : "",
+        yarn_count: result.yarn_count || "",
+        yarn_blend: result.yarn_blend || "",
+        unit: (result.unit || "KG") as "KG" | "LBS" | "BAG",
+        quantity: result.quantity ? String(result.quantity) : "",
+        rate: result.rate ? String(result.rate) : "",
+        car_rent: result.car_rent ? String(result.car_rent) : "",
+        labour: result.labour ? String(result.labour) : "",
+        payment: result.payment ? String(result.payment) : "",
+        payment_method: result.payment_method || "Cash Receipt",
+      });
+      setActiveTab("sales");
+    }
+
+    // Reset scanner states
+    setScanImage(null);
+    setScanImageName(null);
+    setScanResult(null);
+    setScanError(null);
+  };
+
+  const handleBulkImport = async () => {
+    if (!scanResult || !scanResult.ledger_entries) return;
+    setIsImporting(true);
+    try {
+      const res = await fetch("/api/scan-bulk-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          party_name: scanResult.party_name,
+          party_type: scanResult.party_type || "customer",
+          entries: scanResult.ledger_entries,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to import ledger entries.");
+      }
+
+      alert(`Successfully imported ${scanResult.ledger_entries.length} transactions into ${scanResult.party_name}'s Ledger!`);
+      
+      // Trigger full state recalculation
+      await triggerRecalculation();
+
+      // Navigate to the correct ledger
+      if (scanResult.party_type === "supplier") {
+        setSelectedSupplierId(data.party_id || "");
+        setActiveTab("supplier_ledger");
+      } else {
+        setSelectedCustomerId(data.party_id || "");
+        setActiveTab("customer_ledger");
+      }
+
+      // Reset Scanner
+      setScanImage(null);
+      setScanImageName(null);
+      setScanResult(null);
+      setScanError(null);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Failed to bulk import entries.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // -----------------------------------------
   // FORM HANDLERS & AUTO-SUGGEST
   // -----------------------------------------
 
@@ -230,9 +522,47 @@ export default function App() {
     setShowCustomerDropdown(false);
   };
 
+  // Handle Party Input for Returns
+  const handleReturnPartyInput = (val: string, type: "supplier" | "customer") => {
+    setReturnForm((prev) => ({ ...prev, party_name: val, party_id: "" }));
+    if (val.trim().length > 0) {
+      const filtered = parties.filter(
+        (p) => p.type === type && p.name.toLowerCase().includes(val.toLowerCase())
+      );
+      if (type === "supplier") {
+        setSupplierSuggestions(filtered);
+        setShowSupplierDropdown(true);
+      } else {
+        setCustomerSuggestions(filtered);
+        setShowCustomerDropdown(true);
+      }
+    } else {
+      setSupplierSuggestions([]);
+      setCustomerSuggestions([]);
+      setShowSupplierDropdown(false);
+      setShowCustomerDropdown(false);
+    }
+  };
+
+  const selectReturnPartySuggestion = (party: Party) => {
+    setReturnForm((prev) => ({
+      ...prev,
+      party_name: party.name,
+      party_id: party.id,
+      party_phone: party.phone,
+      party_address: party.address,
+    }));
+    setShowSupplierDropdown(false);
+    setShowCustomerDropdown(false);
+  };
+
   // Handle Yarn Input
-  const handleYarnInput = (val: string, formType: "purchase" | "sales") => {
-    const updateForm = formType === "purchase" ? setPurchaseForm : setSalesForm;
+  const handleYarnInput = (val: string, formType: "purchase" | "sales" | "return") => {
+    const updateForm = formType === "purchase"
+      ? setPurchaseForm
+      : formType === "sales"
+        ? setSalesForm
+        : setReturnForm;
     updateForm((prev: any) => ({ ...prev, yarn_name: val, yarn_id: "" }));
 
     if (val.trim().length > 0) {
@@ -245,8 +575,12 @@ export default function App() {
     }
   };
 
-  const selectYarnSuggestion = (yarn: Yarn, formType: "purchase" | "sales") => {
-    const updateForm = formType === "purchase" ? setPurchaseForm : setSalesForm;
+  const selectYarnSuggestion = (yarn: Yarn, formType: "purchase" | "sales" | "return") => {
+    const updateForm = formType === "purchase"
+      ? setPurchaseForm
+      : formType === "sales"
+        ? setSalesForm
+        : setReturnForm;
     updateForm((prev: any) => ({
       ...prev,
       yarn_name: yarn.name,
@@ -263,6 +597,10 @@ export default function App() {
     e.preventDefault();
     if (!purchaseForm.supplier_name.trim()) return alert("Supplier Name is required");
     if (!purchaseForm.yarn_name.trim()) return alert("Yarn Name is required");
+
+    const finalPaymentMethod = purchasePayType === "cash" 
+      ? "Cash Payment" 
+      : `${purchaseBankName.trim() || "Bank"} - ${purchaseBankType} Payment`;
 
     const payload = {
       date: purchaseForm.date,
@@ -281,7 +619,7 @@ export default function App() {
       car_rent: purchaseForm.car_rent,
       labour: purchaseForm.labour,
       payment: purchaseForm.payment,
-      payment_method: purchaseForm.payment_method,
+      payment_method: finalPaymentMethod,
     };
 
     try {
@@ -311,6 +649,9 @@ export default function App() {
           payment: "",
           payment_method: "Cash Payment",
         });
+        setPurchasePayType("cash");
+        setPurchaseBankType("Bank Check");
+        setPurchaseBankName("");
         await triggerRecalculation();
         setActiveTab("supplier_ledger");
       }
@@ -334,6 +675,10 @@ export default function App() {
       }
     }
 
+    const finalPaymentMethod = salesPayType === "cash" 
+      ? "Cash Receipt" 
+      : `${salesBankName.trim() || "Bank"} - ${salesBankType} Receipt`;
+
     const payload = {
       date: salesForm.date,
       party_id: salesForm.customer_id,
@@ -351,7 +696,7 @@ export default function App() {
       car_rent: salesForm.car_rent,
       labour: salesForm.labour,
       payment: salesForm.payment,
-      payment_method: salesForm.payment_method,
+      payment_method: finalPaymentMethod,
     };
 
     try {
@@ -380,6 +725,9 @@ export default function App() {
           payment: "",
           payment_method: "Cash Receipt",
         });
+        setSalesPayType("cash");
+        setSalesBankType("Bank Check");
+        setSalesBankName("");
         await triggerRecalculation();
         setActiveTab("customer_ledger");
       }
@@ -388,11 +736,81 @@ export default function App() {
     }
   };
 
+  // Submit Product Return Entry
+  const handleReturnSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!returnForm.party_name.trim()) return alert("Party Name is required");
+    if (!returnForm.yarn_name.trim()) return alert("Yarn Name is required");
+    if (!returnForm.quantity.trim()) return alert("Quantity is required");
+    if (!returnForm.rate.trim()) return alert("Rate is required");
+
+    const payload = {
+      date: returnForm.date,
+      party_id: returnForm.party_id,
+      party_name: returnForm.party_name,
+      party_type: returnForm.party_type,
+      phone: returnForm.party_phone,
+      address: returnForm.party_address,
+      yarn_name: returnForm.yarn_name,
+      yarn_id: returnForm.yarn_id,
+      yarn_count: returnForm.yarn_count,
+      yarn_blend: returnForm.yarn_blend,
+      unit: returnForm.unit,
+      quantity: returnForm.quantity,
+      rate: returnForm.rate,
+      reason: returnForm.reason,
+    };
+
+    try {
+      const res = await fetch("/api/returns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        alert("Product return transaction posted successfully!");
+        setReturnForm({
+          date: new Date().toISOString().split("T")[0],
+          party_type: returnForm.party_type,
+          party_name: "",
+          party_id: "",
+          party_phone: "",
+          party_address: "",
+          yarn_name: "",
+          yarn_id: "",
+          yarn_count: "",
+          yarn_blend: "",
+          unit: "KG",
+          quantity: "",
+          rate: "",
+          reason: "",
+        });
+        await triggerRecalculation();
+        setActiveTab(returnForm.party_type === "supplier" ? "supplier_ledger" : "customer_ledger");
+      } else {
+        const errData = await res.json();
+        alert(`Error: ${errData.error || "Failed to post product return"}`);
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Failed to submit product return.");
+    }
+  };
+
+  const handleQuickPayForParty = (partyId: string) => {
+    setPaymentPartyId(partyId);
+    setShowPaymentModal(true);
+  };
+
   // Post single Payment/Receipt Receipt (e.g. Bank/RTGS/Cash)
   const handlePostPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paymentPartyId) return alert("Please select a party");
     if (!paymentAmount) return alert("Please enter the amount");
+
+    const calculatedParticulars = modalPayType === "cash"
+      ? (modalDirection === "receipt" ? "Cash Receipt" : "Cash Payment")
+      : `${modalBankName.trim() || "Bank"} - ${modalBankType} ${modalDirection === "receipt" ? "Receipt" : "Payment"}`;
 
     try {
       const res = await fetch("/api/payments", {
@@ -401,7 +819,7 @@ export default function App() {
         body: JSON.stringify({
           date: paymentDate,
           party_id: paymentPartyId,
-          particulars: paymentParticulars,
+          particulars: calculatedParticulars,
           amount: paymentAmount,
         }),
       });
@@ -410,6 +828,9 @@ export default function App() {
         alert("Payment transaction posted successfully!");
         setShowPaymentModal(false);
         setPaymentAmount("");
+        setModalPayType("cash");
+        setModalBankType("Bank Check");
+        setModalBankName("");
         await triggerRecalculation();
       }
     } catch (error) {
@@ -429,6 +850,54 @@ export default function App() {
       } catch (error) {
         console.error(error);
       }
+    }
+  };
+
+  // Open Edit Transaction Dialog
+  const handleOpenEdit = (tx: any) => {
+    setEditingTransaction(tx);
+    setEditForm({
+      date: tx.date || "",
+      particulars: tx.particulars || "",
+      debit: tx.debit !== undefined ? String(tx.debit) : "0",
+      credit: tx.credit !== undefined ? String(tx.credit) : "0",
+      quantity: tx.quantity !== undefined ? String(tx.quantity) : "",
+      rate: tx.rate !== undefined ? String(tx.rate) : "",
+      entry_type: tx.entry_type || "goods",
+    });
+    setShowEditModal(true);
+  };
+
+  // Save Edited Transaction
+  const handleSaveEdit = async () => {
+    if (!editingTransaction) return;
+    try {
+      const res = await fetch(`/api/transactions/${editingTransaction.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: editForm.date,
+          particulars: editForm.particulars,
+          debit: parseFloat(editForm.debit) || 0,
+          credit: parseFloat(editForm.credit) || 0,
+          quantity: editForm.quantity ? parseFloat(editForm.quantity) : 0,
+          rate: editForm.rate ? parseFloat(editForm.rate) : 0,
+          entry_type: editForm.entry_type,
+        }),
+      });
+
+      if (res.ok) {
+        alert("Transaction updated successfully!");
+        setShowEditModal(false);
+        setEditingTransaction(null);
+        await triggerRecalculation();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to update transaction.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error updating transaction.");
     }
   };
 
@@ -539,7 +1008,8 @@ export default function App() {
       txTypeFilter === "all" ||
       (txTypeFilter === "purchase" && tx.party_type === "supplier" && tx.entry_type === "goods") ||
       (txTypeFilter === "sales" && tx.party_type === "customer" && tx.entry_type === "goods") ||
-      (txTypeFilter === "payment" && tx.entry_type === "payment");
+      (txTypeFilter === "payment" && tx.entry_type === "payment") ||
+      (txTypeFilter === "return" && tx.entry_type === "return");
 
     // Party filter
     const matchesParty = txPartyFilter === "all" || tx.party_id === txPartyFilter;
@@ -551,7 +1021,7 @@ export default function App() {
     return matchesSearch && matchesType && matchesParty && matchesFromDate && matchesToDate;
   });
 
-  // Calculate Running balance & ledger lines for chosen party (Khatian)
+  // Calculate Running balance & ledger lines for chosen party (Ledger)
   const getLedgerData = (partyId: string) => {
     return transactions.filter((tx) => tx.party_id === partyId);
   };
@@ -575,6 +1045,74 @@ export default function App() {
 
   const livePurchase = calculateLiveTotals(purchaseForm);
   const liveSales = calculateLiveTotals(salesForm);
+
+  // Daily, Weekly, Monthly calculations for Transaction Log
+  const getPeriodStats = () => {
+    const getFormattedDateStr = (date: Date) => {
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, "0");
+      const dd = String(date.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    };
+
+    const todayStr = getFormattedDateStr(new Date());
+    
+    const getPastDateStr = (daysAgo: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - daysAgo);
+      return getFormattedDateStr(d);
+    };
+    
+    const sevenDaysAgoStr = getPastDateStr(6); // last 7 days inclusive of today
+    const thirtyDaysAgoStr = getPastDateStr(29); // last 30 days inclusive of today
+
+    let todayPaid = 0;
+    let todayReceived = 0;
+    let todaySales = 0;
+
+    let weekPaid = 0;
+    let weekReceived = 0;
+    let weekSales = 0;
+
+    let monthPaid = 0;
+    let monthReceived = 0;
+    let monthSales = 0;
+
+    transactions.forEach((tx) => {
+      const isToday = tx.date === todayStr;
+      const isThisWeek = tx.date >= sevenDaysAgoStr && tx.date <= todayStr;
+      const isThisMonth = tx.date >= thirtyDaysAgoStr && tx.date <= todayStr;
+
+      // Money Paid: supplier payment (debit)
+      if (tx.entry_type === "payment" && tx.party_type === "supplier") {
+        if (isToday) todayPaid += tx.debit;
+        if (isThisWeek) weekPaid += tx.debit;
+        if (isThisMonth) monthPaid += tx.debit;
+      }
+
+      // Money Received: customer payment (debit)
+      if (tx.entry_type === "payment" && tx.party_type === "customer") {
+        if (isToday) todayReceived += tx.debit;
+        if (isThisWeek) weekReceived += tx.debit;
+        if (isThisMonth) monthReceived += tx.debit;
+      }
+
+      // Total Sales: customer goods (credit)
+      if (tx.entry_type === "goods" && tx.party_type === "customer") {
+        if (isToday) todaySales += tx.credit;
+        if (isThisWeek) weekSales += tx.credit;
+        if (isThisMonth) monthSales += tx.credit;
+      }
+    });
+
+    return {
+      today: { paid: todayPaid, received: todayReceived, sales: todaySales },
+      week: { paid: weekPaid, received: weekReceived, sales: weekSales },
+      month: { paid: monthPaid, received: monthReceived, sales: monthSales },
+    };
+  };
+
+  const periodStats = getPeriodStats();
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex font-sans antialiased">
@@ -634,8 +1172,20 @@ export default function App() {
               Sales Entry
             </button>
 
+            <button
+              onClick={() => setActiveTab("product_return")}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                activeTab === "product_return"
+                  ? "bg-blue-600 text-white shadow-md shadow-blue-900/30 font-semibold"
+                  : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+              }`}
+            >
+              <RotateCcw className="h-4.5 w-4.5 text-rose-400" />
+              Product Return
+            </button>
+
             <div className="pt-4 pb-1">
-              <span className="px-4 text-xs font-semibold uppercase tracking-wider text-slate-500 font-mono">Khatian Ledgers</span>
+              <span className="px-4 text-xs font-semibold uppercase tracking-wider text-slate-500 font-mono">Ledgers</span>
             </div>
 
             <button
@@ -660,6 +1210,18 @@ export default function App() {
             >
               <BookOpen className="h-4.5 w-4.5 text-sky-400" />
               Customer Ledger
+            </button>
+
+            <button
+              onClick={() => setActiveTab("dues")}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                activeTab === "dues"
+                  ? "bg-blue-600 text-white shadow-md shadow-blue-900/30 font-semibold"
+                  : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+              }`}
+            >
+              <AlertCircle className="h-4.5 w-4.5 text-rose-400" />
+              Outstanding Dues
             </button>
 
             <div className="pt-4 pb-1">
@@ -769,6 +1331,468 @@ export default function App() {
                 </div>
                 <div className="absolute right-0 bottom-0 opacity-5 pointer-events-none transform translate-y-1/4 translate-x-1/10">
                   <Layers className="h-96 w-96 text-slate-300" />
+                </div>
+              </div>
+
+              {/* ========================================= */}
+              {/* AI HAND-NOTE OCR SLIP SCANNER */}
+              {/* ========================================= */}
+              <div className="bg-gradient-to-br from-indigo-900/95 via-slate-900 to-indigo-950 p-6 rounded-2xl text-white shadow-xl border border-indigo-500/20 relative overflow-hidden">
+                {/* Background decorative glows */}
+                <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-300">
+                        <Brain className="h-5 w-5 animate-pulse" />
+                      </div>
+                      <div>
+                        <h4 className="font-display font-bold text-base flex items-center gap-2">
+                          AI Hand-Note Slip Scanner
+                          <span className="px-2 py-0.5 bg-blue-500 text-white text-[9px] font-bold uppercase rounded-md tracking-widest font-mono">Gemini 3.5 Flash</span>
+                        </h4>
+                        <p className="text-slate-400 text-xs">Snap or upload handwritten bazar slips, katha memos, or client logs to auto-create entries.</p>
+                      </div>
+                    </div>
+                    {scanImage && (
+                      <button
+                        onClick={() => {
+                          setScanImage(null);
+                          setScanImageName(null);
+                          setScanResult(null);
+                          setScanError(null);
+                        }}
+                        className="text-xs font-mono text-slate-400 hover:text-white flex items-center gap-1 transition-colors px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10"
+                      >
+                        <X className="h-3.5 w-3.5" /> Clear / Reset
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                    {/* LEFT COLUMN: Upload & Preview Zone */}
+                    <div className="lg:col-span-5 flex flex-col justify-between">
+                      {!scanImage ? (
+                        <div
+                          onDragOver={handleDragOver}
+                          onDrop={handleDrop}
+                          onClick={() => document.getElementById("ai-scan-file-input")?.click()}
+                          className="border-2 border-dashed border-indigo-500/30 hover:border-indigo-400/60 bg-white/5 hover:bg-indigo-950/20 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all h-64 group"
+                        >
+                          <input
+                            id="ai-scan-file-input"
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFileChange}
+                            className="hidden"
+                          />
+                          <UploadCloud className="h-10 w-10 text-indigo-400 group-hover:scale-110 transition-transform mb-3" />
+                          <p className="text-sm font-semibold text-slate-200">Drag & drop photo here</p>
+                          <p className="text-[10px] text-slate-400 mt-1">or click to browse local files / use camera</p>
+                          <div className="mt-4 inline-flex items-center gap-1 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] px-2.5 py-1 rounded-full font-mono font-medium">
+                            <Camera className="h-3 w-3" /> Mobile Camera Friendly
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="relative border border-indigo-500/30 rounded-xl overflow-hidden bg-slate-950 h-64 flex items-center justify-center">
+                          <img
+                            src={scanImage}
+                            alt="Hand Note Scan Preview"
+                            className="max-h-full max-w-full object-contain"
+                          />
+                          {/* Animated Scan Line */}
+                          {isScanning && (
+                            <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_12px_#3b82f6] animate-scan-line z-20"></div>
+                          )}
+                          {/* Image Tag / Badge */}
+                          <div className="absolute bottom-2 left-2 px-2.5 py-1 bg-black/75 text-[10px] font-mono text-slate-300 rounded-md truncate max-w-[90%] border border-white/5">
+                            📄 {scanImageName || "Uploaded Slip"}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* RIGHT COLUMN: Extraction Results or Guidance */}
+                    <div className="lg:col-span-7 bg-white/5 border border-white/10 rounded-xl p-5 flex flex-col justify-between">
+                      {/* Scenario 1: Ready to Scan */}
+                      {scanImage && !isScanning && !scanResult && !scanError && (
+                        <div className="h-full flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <div className="inline-flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+                              Image Ready
+                            </div>
+                            <h5 className="font-display font-semibold text-slate-100 text-sm">Review image and start scanning</h5>
+                            <p className="text-xs text-slate-300 leading-relaxed">
+                              Gemini will automatically extract Yarn Quality/Brand, count, supplier/customer names, and amounts. It handles typical handwritten slips, market notes, and local textile receipts.
+                            </p>
+                          </div>
+                          <button
+                            onClick={handleScanWithAI}
+                            className="w-full mt-6 py-3 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-lg shadow-indigo-600/20 font-sans border border-indigo-500"
+                          >
+                            <Sparkles className="h-4 w-4 text-blue-200" /> Start Intelligent OCR Scan
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Scenario 2: Scanning Loader */}
+                      {isScanning && (
+                        <div className="h-full flex flex-col items-center justify-center text-center py-8">
+                          <div className="relative mb-4">
+                            <div className="h-12 w-12 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin"></div>
+                            <Brain className="h-5 w-5 text-indigo-400 absolute top-1/2 left-1/2 transform -translate-x-1/10 -translate-y-1/2 animate-pulse" />
+                          </div>
+                          <h5 className="font-semibold text-slate-100 text-sm mb-1 animate-pulse">Scanning Handwritten note...</h5>
+                          <p className="text-slate-400 text-xs max-w-sm">
+                            Gemini is OCR-ing handwritten text, cross-referencing yarn counts, and matching party names against your database.
+                          </p>
+                          <div className="mt-4 flex flex-wrap justify-center gap-2">
+                            <span className="text-[10px] font-mono px-2 py-0.5 bg-indigo-500/10 text-indigo-300 rounded border border-indigo-500/20">Digitizing Handwriting</span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 bg-indigo-500/10 text-indigo-300 rounded border border-indigo-500/20">Mapping Balances</span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 bg-indigo-500/10 text-indigo-300 rounded border border-indigo-500/20">Calculating Rates</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Scenario 3: Scan Completed Successfully */}
+                      {scanResult && (
+                        <div className="h-full flex flex-col justify-between">
+                          <div className="space-y-4">
+                            <div className="flex justify-between items-center">
+                              <span className="inline-flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+                                <Check className="h-3 w-3" /> Scan Complete
+                              </span>
+                              <span className="text-xs font-mono uppercase font-bold bg-white/10 text-slate-200 px-2 py-0.5 rounded border border-white/15">
+                                {scanResult.document_type === "ledger_sheet" ? "Ledger Sheet" : "Single Memo"}
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-300 italic bg-white/5 p-2.5 rounded-lg border border-white/5">
+                              "{scanResult.summary || 'Scan parsed successfully.'}"
+                            </p>
+
+                             {scanResult.document_type === "ledger_sheet" && scanResult.ledger_entries ? (
+                              /* Multi-row Ledger Sheet Table */
+                              <div className="space-y-3">
+                                <div className="bg-white/5 p-3 rounded-lg border border-white/5 space-y-2">
+                                  <p className="text-[10px] text-slate-400 font-mono font-bold">Account Owner / Party & Type</p>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={scanResult.party_name || ""}
+                                      onChange={(e) => setScanResult({ ...scanResult, party_name: e.target.value })}
+                                      className="flex-1 bg-white/5 border border-white/10 rounded px-2.5 py-1 text-slate-200 text-xs focus:outline-hidden focus:border-indigo-500"
+                                      placeholder="Party Name"
+                                    />
+                                    <select
+                                      value={scanResult.party_type || "customer"}
+                                      onChange={(e) => setScanResult({ ...scanResult, party_type: e.target.value })}
+                                      className="bg-slate-900 border border-white/10 rounded px-2 py-1 text-slate-200 text-xs focus:outline-hidden"
+                                    >
+                                      <option value="customer">Customer</option>
+                                      <option value="supplier">Supplier</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div className="max-h-60 overflow-y-auto border border-white/10 rounded-lg text-[11px]">
+                                  <table className="w-full text-left border-collapse">
+                                    <thead>
+                                      <tr className="bg-white/5 text-slate-300 font-mono border-b border-white/10">
+                                        <th className="p-2">Date</th>
+                                        <th className="p-2">Particulars</th>
+                                        <th className="p-2 text-right">Debit</th>
+                                        <th className="p-2 text-right">Credit</th>
+                                        <th className="p-2 text-center w-8"></th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5 text-slate-300">
+                                      {scanResult.ledger_entries.map((entry: any, index: number) => (
+                                        <tr key={index} className="hover:bg-white/5">
+                                          <td className="p-1">
+                                            <input
+                                              type="text"
+                                              value={entry.date || ""}
+                                              onChange={(e) => {
+                                                const updated = [...scanResult.ledger_entries];
+                                                updated[index].date = e.target.value;
+                                                setScanResult({ ...scanResult, ledger_entries: updated });
+                                              }}
+                                              className="w-full bg-transparent text-slate-200 border-none px-1 py-0.5 focus:bg-slate-800 focus:outline-hidden font-mono text-[11px]"
+                                            />
+                                          </td>
+                                          <td className="p-1">
+                                            <input
+                                              type="text"
+                                              value={entry.particulars || ""}
+                                              onChange={(e) => {
+                                                const updated = [...scanResult.ledger_entries];
+                                                updated[index].particulars = e.target.value;
+                                                setScanResult({ ...scanResult, ledger_entries: updated });
+                                              }}
+                                              className="w-full bg-transparent text-slate-200 border-none px-1 py-0.5 focus:bg-slate-800 focus:outline-hidden text-[11px]"
+                                            />
+                                          </td>
+                                          <td className="p-1 text-right">
+                                            <input
+                                              type="number"
+                                              step="any"
+                                              value={entry.debit || ""}
+                                              onChange={(e) => {
+                                                const updated = [...scanResult.ledger_entries];
+                                                updated[index].debit = e.target.value;
+                                                setScanResult({ ...scanResult, ledger_entries: updated });
+                                              }}
+                                              placeholder="-"
+                                              className="w-full bg-transparent text-emerald-400 text-right border-none px-1 py-0.5 focus:bg-slate-800 focus:outline-hidden font-mono text-[11px]"
+                                            />
+                                          </td>
+                                          <td className="p-1 text-right">
+                                            <input
+                                              type="number"
+                                              step="any"
+                                              value={entry.credit || ""}
+                                              onChange={(e) => {
+                                                const updated = [...scanResult.ledger_entries];
+                                                updated[index].credit = e.target.value;
+                                                setScanResult({ ...scanResult, ledger_entries: updated });
+                                              }}
+                                              placeholder="-"
+                                              className="w-full bg-transparent text-amber-400 text-right border-none px-1 py-0.5 focus:bg-slate-800 focus:outline-hidden font-mono text-[11px]"
+                                            />
+                                          </td>
+                                          <td className="p-1 text-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const updated = scanResult.ledger_entries.filter((_: any, i: number) => i !== index);
+                                                setScanResult({ ...scanResult, ledger_entries: updated });
+                                              }}
+                                              className="text-rose-400 hover:text-rose-300 p-0.5 rounded hover:bg-white/5 transition"
+                                              title="Delete Row"
+                                            >
+                                              <X className="h-3.5 w-3.5" />
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <div className="flex justify-end pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const todayStr = new Date().toISOString().split("T")[0];
+                                      const newEntry = { date: todayStr, particulars: "Goods Cargo", debit: "", credit: "", entry_type: "goods" };
+                                      setScanResult({ ...scanResult, ledger_entries: [...(scanResult.ledger_entries || []), newEntry] });
+                                    }}
+                                    className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 border border-indigo-500/30 px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 cursor-pointer"
+                                  >
+                                    <Plus className="h-3 w-3" /> Add Ledger Row
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              /* Details Breakdown (Editable!) */
+                              <div className="grid grid-cols-2 gap-3 text-xs">
+                                <div className="bg-white/5 p-2.5 rounded border border-white/5 space-y-1">
+                                  <p className="text-[10px] text-slate-400 font-mono font-bold">Party Name</p>
+                                  <input
+                                    type="text"
+                                    value={scanResult.party_name || ""}
+                                    onChange={(e) => setScanResult({ ...scanResult, party_name: e.target.value })}
+                                    className="w-full bg-slate-900/60 text-slate-100 border border-white/10 rounded px-2 py-1 text-xs focus:outline-hidden focus:border-indigo-500"
+                                    placeholder="Unspecified"
+                                  />
+                                  <select
+                                    value={scanResult.party_type || "customer"}
+                                    onChange={(e) => setScanResult({ ...scanResult, party_type: e.target.value })}
+                                    className="w-full bg-slate-900/60 text-slate-300 border border-white/10 rounded px-2 py-0.5 text-[10px] focus:outline-hidden"
+                                  >
+                                    <option value="customer">Customer</option>
+                                    <option value="supplier">Supplier</option>
+                                  </select>
+                                </div>
+                                <div className="bg-white/5 p-2.5 rounded border border-white/5 space-y-1">
+                                  <p className="text-[10px] text-slate-400 font-mono font-bold">Yarn Info (Brand & Count)</p>
+                                  <input
+                                    type="text"
+                                    value={scanResult.yarn_name || ""}
+                                    onChange={(e) => setScanResult({ ...scanResult, yarn_name: e.target.value })}
+                                    className="w-full bg-slate-900/60 text-slate-100 border border-white/10 rounded px-2 py-1 text-xs mb-1 focus:outline-hidden focus:border-indigo-500"
+                                    placeholder="Name/Brand"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={scanResult.yarn_count || ""}
+                                    onChange={(e) => setScanResult({ ...scanResult, yarn_count: e.target.value })}
+                                    className="w-full bg-slate-900/60 text-slate-100 border border-white/10 rounded px-2 py-1 text-xs focus:outline-hidden focus:border-indigo-500 font-mono"
+                                    placeholder="Count e.g. 30/1"
+                                  />
+                                </div>
+                                <div className="bg-white/5 p-2.5 rounded border border-white/5 space-y-1">
+                                  <p className="text-[10px] text-slate-400 font-mono font-bold">Quantity & Rate</p>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={scanResult.quantity || ""}
+                                    onChange={(e) => setScanResult({ ...scanResult, quantity: e.target.value })}
+                                    className="w-full bg-slate-900/60 text-slate-100 border border-white/10 rounded px-2 py-1 text-xs mb-1 font-mono focus:outline-hidden focus:border-indigo-500"
+                                    placeholder="Qty (KG)"
+                                  />
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={scanResult.rate || ""}
+                                    onChange={(e) => setScanResult({ ...scanResult, rate: e.target.value })}
+                                    className="w-full bg-slate-900/60 text-slate-100 border border-white/10 rounded px-2 py-1 text-xs font-mono focus:outline-hidden focus:border-indigo-500"
+                                    placeholder="Rate ৳"
+                                  />
+                                </div>
+                                <div className="bg-white/5 p-2.5 rounded border border-white/5 space-y-1">
+                                  <p className="text-[10px] text-slate-400 font-mono font-bold">Payment & Expenses</p>
+                                  <div className="flex gap-1.5">
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={scanResult.payment || ""}
+                                      onChange={(e) => setScanResult({ ...scanResult, payment: e.target.value })}
+                                      className="w-1/2 bg-slate-900/60 text-slate-100 border border-white/10 rounded px-1 py-1 text-xs font-mono focus:outline-hidden focus:border-indigo-500"
+                                      placeholder="Pay ৳"
+                                    />
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={scanResult.car_rent || ""}
+                                      onChange={(e) => setScanResult({ ...scanResult, car_rent: e.target.value })}
+                                      className="w-1/4 bg-slate-900/60 text-slate-100 border border-white/10 rounded px-1 py-1 text-[10px] font-mono focus:outline-hidden focus:border-indigo-500"
+                                      placeholder="Rent"
+                                      title="Transport Rent"
+                                    />
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={scanResult.labour || ""}
+                                      onChange={(e) => setScanResult({ ...scanResult, labour: e.target.value })}
+                                      className="w-1/4 bg-slate-900/60 text-slate-100 border border-white/10 rounded px-1 py-1 text-[10px] font-mono focus:outline-hidden focus:border-indigo-500"
+                                      placeholder="Lab"
+                                      title="Labour charges"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-4 flex gap-2">
+                            {scanResult.document_type === "ledger_sheet" && scanResult.ledger_entries ? (
+                              <button
+                                onClick={handleBulkImport}
+                                disabled={isImporting}
+                                className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-emerald-500 shadow-md shadow-emerald-600/10"
+                              >
+                                {isImporting ? (
+                                  <>
+                                    <div className="h-3 w-3 rounded-full border-2 border-white/20 border-t-white animate-spin"></div>
+                                    Importing Ledger Records...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-4 w-4" /> Bulk Import {scanResult.ledger_entries.length} Ledger Records
+                                  </>
+                                )}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleAutofill(scanResult)}
+                                className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-emerald-500 shadow-md shadow-emerald-600/10"
+                              >
+                                <Sparkles className="h-4 w-4" /> Approve & Autofill Entry Form
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                setScanResult(null);
+                                setScanImage(null);
+                                setScanImageName(null);
+                              }}
+                              className="py-2.5 px-3 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg border border-white/10 text-xs transition-colors cursor-pointer flex items-center gap-1 font-semibold"
+                              title="Go back to upload screen"
+                            >
+                              ← Back / Rescan
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Scenario 4: Error State */}
+                      {scanError && (
+                        <div className="h-full flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <div className="inline-flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+                              <AlertCircle className="h-3 w-3" /> Scan Error
+                            </div>
+                            <h5 className="font-semibold text-slate-100 text-sm">Failed to extract text from slip</h5>
+                            <p className="text-xs text-rose-300 leading-relaxed bg-rose-500/5 p-3 rounded-lg border border-rose-500/10 font-mono">
+                              {scanError}
+                            </p>
+                          </div>
+                          <div className="mt-6 flex gap-2">
+                            <button
+                              onClick={handleScanWithAI}
+                              className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer border border-indigo-500"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" /> Try Scanning Again
+                            </button>
+                            <button
+                              onClick={() => {
+                                setScanImage(null);
+                                setScanImageName(null);
+                                setScanResult(null);
+                                setScanError(null);
+                              }}
+                              className="py-2.5 px-3 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg border border-white/10 text-xs transition-colors"
+                            >
+                              Select Different Image
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Scenario 5: Welcome / Guidance State */}
+                      {!scanImage && (
+                        <div className="h-full flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <h5 className="font-display font-semibold text-slate-200 text-sm">How AI Scanning Works:</h5>
+                            <ul className="text-xs text-slate-400 space-y-2 leading-relaxed">
+                              <li className="flex items-start gap-2">
+                                <span className="text-indigo-400 font-mono">1.</span>
+                                <span>Upload any photo of handwritten market notes, daily katha slips, or mill receipts.</span>
+                              </li>
+                              <li className="flex items-start gap-2">
+                                <span className="text-indigo-400 font-mono">2.</span>
+                                <span>Our **Gemini 3.5 Flash** OCR engine scans Bengali/English market handwriting.</span>
+                              </li>
+                              <li className="flex items-start gap-2">
+                                <span className="text-indigo-400 font-mono">3.</span>
+                                <span>It cross-checks your database to auto-match existing Customers, Suppliers, and Yarn.</span>
+                              </li>
+                              <li className="flex items-start gap-2">
+                                <span className="text-indigo-400 font-mono">4.</span>
+                                <span>Approve the extracted values to automatically fill & navigate to the correct entry form!</span>
+                              </li>
+                            </ul>
+                          </div>
+                          <div className="text-[10px] text-indigo-400 font-mono mt-4">
+                            ⚡ Powered by Google Gemini Multi-Modal Intelligence
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -910,10 +1934,10 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 3. Recent Khatian Activity */}
+                {/* 3. Recent Ledger Activity */}
                 <div className="col-span-1 lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col">
                   <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
-                    <h4 className="text-sm font-bold text-slate-900">Recent Khatian Activity</h4>
+                    <h4 className="text-sm font-bold text-slate-900">Recent Ledger Activity</h4>
                     <span className="text-[10px] font-bold font-mono px-2 py-1 bg-slate-100 text-slate-600 rounded-md">Ledger Feed</span>
                   </div>
                   <div className="flex-1 overflow-x-auto">
@@ -1247,19 +2271,60 @@ export default function App() {
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Payment Method</label>
-                      <select
-                        value={purchaseForm.payment_method}
-                        onChange={(e) => setPurchaseForm((p) => ({ ...p, payment_method: e.target.value }))}
-                        className="w-full border border-slate-200 rounded-lg px-4 py-2.5 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
-                      >
-                        <option value="Cash Payment">Cash Payment</option>
-                        <option value="RTGS">RTGS Bank</option>
-                        <option value="Fund Transfer">Fund Transfer</option>
-                        <option value="Bank Check">Bank Check</option>
-                        <option value="DBBL ABC">DBBL ABC Bank</option>
-                      </select>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Payment Mode</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPurchasePayType("cash")}
+                            className={`py-2 px-3 text-sm font-semibold rounded-lg border transition cursor-pointer ${
+                              purchasePayType === "cash"
+                                ? "bg-emerald-600 border-emerald-600 text-white"
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            Cash
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPurchasePayType("bank")}
+                            className={`py-2 px-3 text-sm font-semibold rounded-lg border transition cursor-pointer ${
+                              purchasePayType === "bank"
+                                ? "bg-emerald-600 border-emerald-600 text-white"
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            Bank
+                          </button>
+                        </div>
+                      </div>
+
+                      {purchasePayType === "bank" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100 animate-fadeIn">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Transfer Type</label>
+                            <select
+                              value={purchaseBankType}
+                              onChange={(e) => setPurchaseBankType(e.target.value as any)}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-blue-500"
+                            >
+                              <option value="Bank Check">Bank Check</option>
+                              <option value="Fund Transfer">Fund Transfer</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Bank Name</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. DBBL, EBL, City Bank"
+                              value={purchaseBankName}
+                              onChange={(e) => setPurchaseBankName(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-blue-500"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1535,19 +2600,60 @@ export default function App() {
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Payment Method</label>
-                      <select
-                        value={salesForm.payment_method}
-                        onChange={(e) => setSalesForm((p) => ({ ...p, payment_method: e.target.value }))}
-                        className="w-full border border-slate-200 rounded-lg px-4 py-2.5 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
-                      >
-                        <option value="Cash Receipt">Cash Receipt</option>
-                        <option value="RTGS">RTGS Bank</option>
-                        <option value="Fund Transfer">Fund Transfer</option>
-                        <option value="Bank Check">Bank Check</option>
-                        <option value="DBBL ABC">DBBL ABC Bank</option>
-                      </select>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Payment Mode</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSalesPayType("cash")}
+                            className={`py-2 px-3 text-sm font-semibold rounded-lg border transition cursor-pointer ${
+                              salesPayType === "cash"
+                                ? "bg-indigo-600 border-indigo-600 text-white"
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            Cash
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSalesPayType("bank")}
+                            className={`py-2 px-3 text-sm font-semibold rounded-lg border transition cursor-pointer ${
+                              salesPayType === "bank"
+                                ? "bg-indigo-600 border-indigo-600 text-white"
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            Bank
+                          </button>
+                        </div>
+                      </div>
+
+                      {salesPayType === "bank" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100 animate-fadeIn">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Transfer Type</label>
+                            <select
+                              value={salesBankType}
+                              onChange={(e) => setSalesBankType(e.target.value as any)}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-blue-500"
+                            >
+                              <option value="Bank Check">Bank Check</option>
+                              <option value="Fund Transfer">Fund Transfer</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Bank Name</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. DBBL, EBL, City Bank"
+                              value={salesBankName}
+                              onChange={(e) => setSalesBankName(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-blue-500"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1588,7 +2694,289 @@ export default function App() {
           )}
 
           {/* ========================================= */}
-          {/* 4. SUPPLIER LEDGER (KHATIAN) */}
+          {/* 3.1. PRODUCT RETURN VIEW */}
+          {/* ========================================= */}
+          {activeTab === "product_return" && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fadeIn max-w-3xl mx-auto">
+              <div className="bg-slate-900 p-6 text-white border-b border-slate-800">
+                <h3 className="font-display text-lg font-bold">New Product Return Entry</h3>
+                <p className="text-xs text-slate-400 mt-1">Record yarn product returns to back-calculate inventory and ledger balances.</p>
+              </div>
+
+              <form onSubmit={handleReturnSubmit} className="p-8 space-y-6">
+                {/* Return Type Toggle */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 font-mono">Return Type</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setReturnForm(prev => ({ ...prev, party_type: "customer", party_id: "", party_name: "" }))}
+                      className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${
+                        returnForm.party_type === "customer"
+                          ? "bg-rose-50 border-rose-300 text-rose-700 shadow-xs"
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      <TrendingDown className="h-4.5 w-4.5" />
+                      Customer Return (Sales Return)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReturnForm(prev => ({ ...prev, party_type: "supplier", party_id: "", party_name: "" }))}
+                      className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${
+                        returnForm.party_type === "supplier"
+                          ? "bg-amber-50 border-amber-300 text-amber-700 shadow-xs"
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      <TrendingUp className="h-4.5 w-4.5" />
+                      Supplier Return (Purchase Return)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Date Input */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Return Date</label>
+                    <input
+                      type="date"
+                      required
+                      value={returnForm.date}
+                      onChange={(e) => setReturnForm((p) => ({ ...p, date: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg px-4 py-2.5 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
+                    />
+                  </div>
+
+                  {/* Party Suggest Input */}
+                  <div className="relative">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">
+                      {returnForm.party_type === "customer" ? "Customer Name" : "Supplier Name"}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder={`Type ${returnForm.party_type} name...`}
+                      value={returnForm.party_name}
+                      onChange={(e) => handleReturnPartyInput(e.target.value, returnForm.party_type)}
+                      onBlur={() => setTimeout(() => { setShowCustomerDropdown(false); setShowSupplierDropdown(false); }, 200)}
+                      onFocus={() => returnForm.party_name.trim().length > 0 && (returnForm.party_type === "supplier" ? setShowSupplierDropdown(true) : setShowCustomerDropdown(true))}
+                      className="w-full border border-slate-200 rounded-lg px-4 py-2.5 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
+                    />
+                    
+                    {/* Customer Dropdown Suggestions */}
+                    {returnForm.party_type === "customer" && showCustomerDropdown && customerSuggestions.length > 0 && (
+                      <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {customerSuggestions.map((c) => (
+                          <div
+                            key={c.id}
+                            onMouseDown={() => selectReturnPartySuggestion(c)}
+                            className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm font-medium flex justify-between"
+                          >
+                            <span>{c.name}</span>
+                            <span className="text-xs font-mono text-indigo-500">{formatTk(c.balance)} balance</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Supplier Dropdown Suggestions */}
+                    {returnForm.party_type === "supplier" && showSupplierDropdown && supplierSuggestions.length > 0 && (
+                      <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {supplierSuggestions.map((s) => (
+                          <div
+                            key={s.id}
+                            onMouseDown={() => selectReturnPartySuggestion(s)}
+                            className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm font-medium flex justify-between"
+                          >
+                            <span>{s.name}</span>
+                            <span className="text-xs font-mono text-rose-500">{formatTk(s.balance)} due</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Optional Auto-Add Fields for New Party */}
+                {!returnForm.party_id && returnForm.party_name.trim().length > 0 && (
+                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="h-4 w-4 text-amber-600" />
+                      <span className="text-xs font-semibold text-amber-800">
+                        "{returnForm.party_name}" is completely new. It will be auto-saved in Directory as a {returnForm.party_type}.
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <input
+                          type="text"
+                          placeholder="Phone (Optional)"
+                          value={returnForm.party_phone}
+                          onChange={(e) => setReturnForm((p) => ({ ...p, party_phone: e.target.value }))}
+                          className="w-full border border-amber-300 rounded-lg px-3 py-1.5 bg-white text-xs"
+                        />
+                      </div>
+                      <div>
+                        <input
+                          type="text"
+                          placeholder="Address (Optional)"
+                          value={returnForm.party_address}
+                          onChange={(e) => setReturnForm((p) => ({ ...p, party_address: e.target.value }))}
+                          className="w-full border border-amber-300 rounded-lg px-3 py-1.5 bg-white text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Yarn Product Selection */}
+                <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-6">
+                  <h4 className="text-xs font-bold text-slate-600 uppercase tracking-widest font-mono">Yarn Product Returned</h4>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="relative">
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Yarn Brand/Type Name</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Search or enter yarn name..."
+                        value={returnForm.yarn_name}
+                        onChange={(e) => handleYarnInput(e.target.value, "return")}
+                        onBlur={() => setTimeout(() => setShowYarnDropdown(false), 200)}
+                        onFocus={() => returnForm.yarn_name.trim().length > 0 && setShowYarnDropdown(true)}
+                        className="w-full border border-slate-200 rounded-lg px-3.5 py-2 bg-white text-sm focus:outline-blue-500"
+                      />
+                      {showYarnDropdown && yarnSuggestions.length > 0 && (
+                        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {yarnSuggestions.map((y) => (
+                            <div
+                              key={y.id}
+                              onMouseDown={() => selectYarnSuggestion(y, "return")}
+                              className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm font-medium flex justify-between"
+                            >
+                              <span>{y.name} ({y.count} {y.blend})</span>
+                              <span className="text-xs font-mono text-slate-400">Stock: {y.stock} {y.unit}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Count</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 32s"
+                          value={returnForm.yarn_count}
+                          onChange={(e) => setReturnForm((p) => ({ ...p, yarn_count: e.target.value }))}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Blend</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Cotton"
+                          value={returnForm.yarn_blend}
+                          onChange={(e) => setReturnForm((p) => ({ ...p, yarn_blend: e.target.value }))}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Unit</label>
+                        <select
+                          value={returnForm.unit}
+                          onChange={(e) => setReturnForm((p) => ({ ...p, unit: e.target.value as any }))}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm"
+                        >
+                          <option value="KG">KG</option>
+                          <option value="LBS">LBS</option>
+                          <option value="BAG">BAG</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Returned Quantity</label>
+                      <input
+                        type="number"
+                        step="any"
+                        required
+                        placeholder="0.00"
+                        value={returnForm.quantity}
+                        onChange={(e) => setReturnForm((p) => ({ ...p, quantity: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-lg px-3.5 py-2 bg-white text-sm focus:outline-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Rate (per Unit)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        required
+                        placeholder="0.00 ৳"
+                        value={returnForm.rate}
+                        onChange={(e) => setReturnForm((p) => ({ ...p, rate: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-lg px-3.5 py-2 bg-white text-sm focus:outline-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Reason for Return (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Defective package, weight mismatch, excess shipment"
+                      value={returnForm.reason}
+                      onChange={(e) => setReturnForm((p) => ({ ...p, reason: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg px-3.5 py-2 bg-white text-sm focus:outline-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Return Dynamic Summary Card */}
+                <div className="bg-slate-900 text-slate-100 p-6 rounded-xl space-y-4 font-mono shadow-inner">
+                  <div className="flex justify-between text-xs border-b border-slate-800 pb-2">
+                    <span className="text-slate-400">Total Return Value:</span>
+                    <span className="text-white font-bold">
+                      {formatTk((parseFloat(returnForm.quantity) || 0) * (parseFloat(returnForm.rate) || 0))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs border-b border-slate-800 pb-2">
+                    <span className="text-slate-400">Inventory Stock Change:</span>
+                    <span className={returnForm.party_type === "customer" ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                      {returnForm.party_type === "customer" 
+                        ? `+${parseFloat(returnForm.quantity) || 0} ${returnForm.unit} (Increases Stock)` 
+                        : `-${parseFloat(returnForm.quantity) || 0} ${returnForm.unit} (Decreases Stock)`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Ledger Balance Change:</span>
+                    <span className="text-amber-400 font-bold">
+                      -{formatTk((parseFloat(returnForm.quantity) || 0) * (parseFloat(returnForm.rate) || 0))} (Reduces Outstanding Balance)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Submit Buttons */}
+                <div className="flex justify-end pt-4 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-8 py-3 rounded-xl transition shadow-md shadow-blue-900/10 cursor-pointer"
+                  >
+                    Post Product Return
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* 4. SUPPLIER LEDGER */}
           {/* ========================================= */}
           {activeTab === "supplier_ledger" && (
             <div className="space-y-6 animate-fadeIn">
@@ -1653,7 +3041,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* LEDGER REPORT SHEET (Khatian) */}
+              {/* LEDGER REPORT SHEET */}
               {selectedSupplierId ? (
                 (() => {
                   const sPart = getLedgerParty(selectedSupplierId);
@@ -1668,7 +3056,7 @@ export default function App() {
                     <div id="ledger-sheet-print" className="bg-white rounded-xl border border-slate-200/80 shadow-md p-10 space-y-8 print:border-none print:shadow-none font-sans">
                       {/* Bengali styled header */}
                       <div className="text-center space-y-2 border-b-2 border-slate-100 pb-6 relative">
-                        <h2 className="font-bengali text-3xl font-extrabold text-slate-800 tracking-tight">খতিয়ান হিসাব বিবরণী</h2>
+                        <h2 className="font-bengali text-3xl font-extrabold text-slate-800 tracking-tight">লেজার হিসাব বিবরণী</h2>
                         <p className="text-sm font-semibold text-slate-500 font-mono tracking-widest uppercase">Supplier Ledger Statement</p>
                         
                         <div className="mt-4 pt-2">
@@ -1701,12 +3089,20 @@ export default function App() {
                               const isCreditRow = tx.credit > 0;
 
                               return (
-                                <tr key={tx.id} className="hover:bg-slate-50/50 print:hover:bg-transparent transition">
+                                <tr 
+                                  key={tx.id} 
+                                  onClick={() => handleOpenEdit(tx)}
+                                  className="hover:bg-slate-100/80 print:hover:bg-transparent transition cursor-pointer group"
+                                  title="Click to edit individual transaction details"
+                                >
                                   <td className="py-3 px-4 text-center font-mono font-medium text-slate-600 shrink-0 whitespace-nowrap">
                                     {tx.date}
                                   </td>
-                                  <td className="py-3 px-6 font-semibold text-slate-800">
-                                    {tx.particulars}
+                                  <td className="py-3 px-6 font-semibold text-slate-800 flex items-center justify-between gap-2">
+                                    <span>{tx.particulars}</span>
+                                    <span className="opacity-0 group-hover:opacity-100 text-blue-600 transition text-[10px] flex items-center gap-1 font-sans font-normal bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 shrink-0">
+                                      <Edit2 className="h-3 w-3" /> Edit
+                                    </span>
                                   </td>
                                   <td className="py-3 px-4 text-right font-mono font-bold text-slate-700">
                                     {isDebitRow ? formatTk(tx.debit) : "-"}
@@ -1763,14 +3159,14 @@ export default function App() {
                 })()
               ) : (
                 <div className="bg-white border border-slate-200 p-12 text-center text-slate-400 rounded-xl">
-                  Please select a supplier from the list above to render their complete ledger khatian.
+                  Please select a supplier from the list above to render their complete ledger statement.
                 </div>
               )}
             </div>
           )}
 
           {/* ========================================= */}
-          {/* 5. CUSTOMER LEDGER (KHATIAN) */}
+          {/* 5. CUSTOMER LEDGER */}
           {/* ========================================= */}
           {activeTab === "customer_ledger" && (
             <div className="space-y-6 animate-fadeIn">
@@ -1834,7 +3230,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* LEDGER REPORT SHEET (Khatian) */}
+              {/* LEDGER REPORT SHEET */}
               {selectedCustomerId ? (
                 (() => {
                   const cPart = getLedgerParty(selectedCustomerId);
@@ -1849,7 +3245,7 @@ export default function App() {
                     <div id="customer-ledger-sheet-print" className="bg-white rounded-xl border border-slate-200/80 shadow-md p-10 space-y-8 print:border-none print:shadow-none font-sans">
                       {/* Bengali styled header */}
                       <div className="text-center space-y-2 border-b-2 border-slate-100 pb-6 relative">
-                        <h2 className="font-bengali text-3xl font-extrabold text-slate-800 tracking-tight">খতিয়ান হিসাব বিবরণী</h2>
+                        <h2 className="font-bengali text-3xl font-extrabold text-slate-800 tracking-tight">লেজার হিসাব বিবরণী</h2>
                         <p className="text-sm font-semibold text-slate-500 font-mono tracking-widest uppercase">Customer Ledger Statement</p>
                         
                         <div className="mt-4 pt-2">
@@ -1882,12 +3278,20 @@ export default function App() {
                               const isCreditRow = tx.credit > 0;
 
                               return (
-                                <tr key={tx.id} className="hover:bg-slate-50/50 print:hover:bg-transparent transition">
+                                <tr 
+                                  key={tx.id} 
+                                  onClick={() => handleOpenEdit(tx)}
+                                  className="hover:bg-slate-100/80 print:hover:bg-transparent transition cursor-pointer group"
+                                  title="Click to edit individual transaction details"
+                                >
                                   <td className="py-3 px-4 text-center font-mono font-medium text-slate-600 shrink-0 whitespace-nowrap">
                                     {tx.date}
                                   </td>
-                                  <td className="py-3 px-6 font-semibold text-slate-800">
-                                    {tx.particulars}
+                                  <td className="py-3 px-6 font-semibold text-slate-800 flex items-center justify-between gap-2">
+                                    <span>{tx.particulars}</span>
+                                    <span className="opacity-0 group-hover:opacity-100 text-blue-600 transition text-[10px] flex items-center gap-1 font-sans font-normal bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 shrink-0">
+                                      <Edit2 className="h-3 w-3" /> Edit
+                                    </span>
                                   </td>
                                   <td className="py-3 px-4 text-right font-mono font-bold text-slate-700">
                                     {isDebitRow ? formatTk(tx.debit) : "-"}
@@ -1944,7 +3348,7 @@ export default function App() {
                 })()
               ) : (
                 <div className="bg-white border border-slate-200 p-12 text-center text-slate-400 rounded-xl">
-                  Please select a customer from the list above to render their complete ledger khatian.
+                  Please select a customer from the list above to render their complete ledger statement.
                 </div>
               )}
             </div>
@@ -2218,6 +3622,75 @@ export default function App() {
           {/* ========================================= */}
           {activeTab === "history" && (
             <div className="space-y-6 animate-fadeIn">
+              {/* Daily, Weekly, Monthly Summary Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* TODAY */}
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition duration-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">Today's Summary</span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Total Sales Today:</span>
+                      <span className="text-sm font-bold text-indigo-600 font-mono">{formatTk(periodStats.today.sales)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Received from Customer:</span>
+                      <span className="text-sm font-bold text-emerald-600 font-mono">{formatTk(periodStats.today.received)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Paid to Suppliers:</span>
+                      <span className="text-sm font-bold text-rose-500 font-mono">{formatTk(periodStats.today.paid)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* WEEK */}
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition duration-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">Weekly Summary (7 Days)</span>
+                    <TrendingUp className="h-4.5 w-4.5 text-blue-500" />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Total Sales:</span>
+                      <span className="text-sm font-bold text-indigo-600 font-mono">{formatTk(periodStats.week.sales)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Received from Customer:</span>
+                      <span className="text-sm font-bold text-emerald-600 font-mono">{formatTk(periodStats.week.received)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Paid to Suppliers:</span>
+                      <span className="text-sm font-bold text-rose-500 font-mono">{formatTk(periodStats.week.paid)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MONTH */}
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition duration-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">Monthly Summary (30 Days)</span>
+                    <Database className="h-4.5 w-4.5 text-slate-400" />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Total Sales:</span>
+                      <span className="text-sm font-bold text-indigo-600 font-mono">{formatTk(periodStats.month.sales)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Received from Customer:</span>
+                      <span className="text-sm font-bold text-emerald-600 font-mono">{formatTk(periodStats.month.received)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-500">Paid to Suppliers:</span>
+                      <span className="text-sm font-bold text-rose-500 font-mono">{formatTk(periodStats.month.paid)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Comprehensive Filter Bar */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2245,6 +3718,7 @@ export default function App() {
                       <option value="purchase">Purchases Goods Only</option>
                       <option value="sales">Sales Goods Only</option>
                       <option value="payment">Payments / Receipts</option>
+                      <option value="return">Product Returns</option>
                     </select>
                   </div>
 
@@ -2326,7 +3800,12 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm">
                       {filteredTransactions.map((tx) => (
-                        <tr key={tx.id} className="hover:bg-slate-50/50 transition">
+                        <tr 
+                          key={tx.id} 
+                          onClick={() => handleOpenEdit(tx)}
+                          className="hover:bg-slate-100/85 transition cursor-pointer group"
+                          title="Click to edit individual transaction details"
+                        >
                           <td className="py-3 px-4 text-center font-mono font-medium text-slate-600 shrink-0 whitespace-nowrap">
                             {tx.date}
                           </td>
@@ -2336,8 +3815,11 @@ export default function App() {
                               {tx.party_type}
                             </span>
                           </td>
-                          <td className="py-3 px-6 font-medium text-slate-700">
-                            {tx.particulars}
+                          <td className="py-3 px-6 font-medium text-slate-700 flex items-center justify-between gap-2">
+                            <span>{tx.particulars}</span>
+                            <span className="opacity-0 group-hover:opacity-100 text-blue-600 transition text-[10px] flex items-center gap-1 font-sans font-normal bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 shrink-0">
+                              <Edit2 className="h-3 w-3" /> Click to Edit
+                            </span>
                           </td>
                           <td className="py-3 px-4 text-right font-mono font-bold text-slate-800">
                             {tx.debit > 0 ? formatTk(tx.debit) : "-"}
@@ -2346,13 +3828,28 @@ export default function App() {
                             {tx.credit > 0 ? formatTk(tx.credit) : "-"}
                           </td>
                           <td className="py-3 px-4 text-center">
-                            <button
-                              onClick={() => handleDeleteInvoice(tx.invoice_id)}
-                              className="p-1.5 hover:bg-rose-50 text-rose-500 rounded hover:text-rose-600 transition cursor-pointer"
-                              title="Delete complete invoice entry"
-                            >
-                              <Trash2 className="h-4.5 w-4.5" />
-                            </button>
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenEdit(tx);
+                                }}
+                                className="p-1.5 hover:bg-blue-50 text-blue-600 rounded hover:text-blue-700 transition cursor-pointer"
+                                title="Edit individual transaction"
+                              >
+                                <Edit2 className="h-4.5 w-4.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteInvoice(tx.invoice_id);
+                                }}
+                                className="p-1.5 hover:bg-rose-50 text-rose-500 rounded hover:text-rose-600 transition cursor-pointer"
+                                title="Delete complete invoice entry"
+                              >
+                                <Trash2 className="h-4.5 w-4.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2366,6 +3863,172 @@ export default function App() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================= */}
+          {/* 8.5 OUTSTANDING DUES DASHBOARD */}
+          {/* ========================================= */}
+          {activeTab === "dues" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* Top Stats Overview */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Total Receivables Card */}
+                <div className="bg-white p-6 rounded-xl border border-rose-100 shadow-xs flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-rose-500 font-mono">Total Receivable from Customers</p>
+                    <h3 className="text-3xl font-extrabold font-display text-rose-600 mt-2 font-mono">
+                      {formatTk(parties.filter(p => p.type === "customer" && p.balance > 0).reduce((sum, p) => sum + p.balance, 0))}
+                    </h3>
+                    <p className="text-slate-400 text-xs mt-1">Outstanding collections due from buyers</p>
+                  </div>
+                  <div className="bg-rose-50 p-4 rounded-xl border border-rose-100">
+                    <TrendingUp className="h-8 w-8 text-rose-500" />
+                  </div>
+                </div>
+
+                {/* Total Payables Card */}
+                <div className="bg-white p-6 rounded-xl border border-amber-100 shadow-xs flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-500 font-mono">Total Payable to Suppliers</p>
+                    <h3 className="text-3xl font-extrabold font-display text-amber-600 mt-2 font-mono">
+                      {formatTk(parties.filter(p => p.type === "supplier" && p.balance > 0).reduce((sum, p) => sum + p.balance, 0))}
+                    </h3>
+                    <p className="text-slate-400 text-xs mt-1">Outstanding liabilities we owe to sellers</p>
+                  </div>
+                  <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
+                    <TrendingDown className="h-8 w-8 text-amber-500" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Global search */}
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
+                <Search className="h-5 w-5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search outstanding accounts by name or phone..."
+                  value={duesSearchQuery}
+                  onChange={(e) => setDuesSearchQuery(e.target.value)}
+                  className="w-full bg-transparent border-0 outline-hidden text-sm placeholder-slate-400 text-slate-800 focus:outline-none"
+                />
+                {duesSearchQuery && (
+                  <button onClick={() => setDuesSearchQuery("")} className="text-slate-400 hover:text-slate-600 font-semibold text-xs">Clear</button>
+                )}
+              </div>
+
+              {/* Grid lists */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Customers Column */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs flex flex-col">
+                  <div className="bg-rose-50/50 p-4 border-b border-slate-200 flex justify-between items-center">
+                    <div>
+                      <h4 className="font-display font-bold text-slate-800 text-base">Customers Dues List</h4>
+                      <p className="text-xs text-rose-600/80 font-medium">Money we will get from customers</p>
+                    </div>
+                    <span className="bg-rose-100 text-rose-800 text-xs font-bold font-mono px-2.5 py-1 rounded-full border border-rose-200">
+                      {parties.filter(p => p.type === "customer" && p.balance > 0).length} parties
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 flex-1 overflow-y-auto max-h-[550px]">
+                    {parties
+                      .filter(p => p.type === "customer" && p.balance > 0 && (
+                        p.name.toLowerCase().includes(duesSearchQuery.toLowerCase()) ||
+                        p.phone.includes(duesSearchQuery)
+                      ))
+                      .sort((a, b) => b.balance - a.balance)
+                      .map((p) => (
+                        <div key={p.id} className="p-4 hover:bg-slate-50 transition flex justify-between items-center gap-4">
+                          <div className="space-y-1">
+                            <span className="font-semibold text-slate-800 block text-sm">{p.name}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-slate-500 text-xs">
+                              <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {p.phone || "No phone"}</span>
+                              {p.address && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {p.address}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 shrink-0">
+                            <div className="text-right">
+                              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block font-mono">Due Balance</span>
+                              <span className="text-sm font-extrabold text-rose-600 font-mono">{formatTk(p.balance)}</span>
+                            </div>
+                            <button
+                              onClick={() => handleQuickPayForParty(p.id)}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer flex items-center gap-1 border border-emerald-700 shadow-xs"
+                              title="Update cash receipt from customer"
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Collect
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                    {parties.filter(p => p.type === "customer" && p.balance > 0 && (
+                      p.name.toLowerCase().includes(duesSearchQuery.toLowerCase()) ||
+                      p.phone.includes(duesSearchQuery)
+                    )).length === 0 && (
+                      <div className="py-12 text-center text-slate-400 text-sm font-medium">
+                        No outstanding customer dues found.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Suppliers Column */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs flex flex-col">
+                  <div className="bg-amber-50/50 p-4 border-b border-slate-200 flex justify-between items-center">
+                    <div>
+                      <h4 className="font-display font-bold text-slate-800 text-base">Suppliers Payables List</h4>
+                      <p className="text-xs text-amber-600/80 font-medium">Money they getting from me</p>
+                    </div>
+                    <span className="bg-amber-100 text-amber-800 text-xs font-bold font-mono px-2.5 py-1 rounded-full border border-amber-200">
+                      {parties.filter(p => p.type === "supplier" && p.balance > 0).length} parties
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 flex-1 overflow-y-auto max-h-[550px]">
+                    {parties
+                      .filter(p => p.type === "supplier" && p.balance > 0 && (
+                        p.name.toLowerCase().includes(duesSearchQuery.toLowerCase()) ||
+                        p.phone.includes(duesSearchQuery)
+                      ))
+                      .sort((a, b) => b.balance - a.balance)
+                      .map((p) => (
+                        <div key={p.id} className="p-4 hover:bg-slate-50 transition flex justify-between items-center gap-4">
+                          <div className="space-y-1">
+                            <span className="font-semibold text-slate-800 block text-sm">{p.name}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-slate-500 text-xs">
+                              <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {p.phone || "No phone"}</span>
+                              {p.address && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {p.address}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 shrink-0">
+                            <div className="text-right">
+                              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block font-mono">We Owe</span>
+                              <span className="text-sm font-extrabold text-amber-600 font-mono">{formatTk(p.balance)}</span>
+                            </div>
+                            <button
+                              onClick={() => handleQuickPayForParty(p.id)}
+                              className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer flex items-center gap-1 border border-blue-700 shadow-xs"
+                              title="Update cash payment to supplier"
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Pay
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                    {parties.filter(p => p.type === "supplier" && p.balance > 0 && (
+                      p.name.toLowerCase().includes(duesSearchQuery.toLowerCase()) ||
+                      p.phone.includes(duesSearchQuery)
+                    )).length === 0 && (
+                      <div className="py-12 text-center text-slate-400 text-sm font-medium">
+                        No outstanding supplier payables found.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2436,21 +4099,62 @@ export default function App() {
                 />
               </div>
 
+              {/* Payment Mode Selector */}
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Particulars / Payment Mode</label>
-                <select
-                  value={paymentParticulars}
-                  onChange={(e) => setPaymentParticulars(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
-                >
-                  <option value="Cash Receipt">Cash Receipt</option>
-                  <option value="Cash Payment">Cash Payment</option>
-                  <option value="RTGS">RTGS Bank</option>
-                  <option value="Fund Transfer">Fund Transfer</option>
-                  <option value="Bank Check">Bank Check</option>
-                  <option value="DBBL ABC">DBBL ABC Bank</option>
-                </select>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Payment Mode</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModalPayType("cash")}
+                    className={`py-2 px-3 text-sm font-semibold rounded-lg border transition cursor-pointer ${
+                      modalPayType === "cash"
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    Cash
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModalPayType("bank")}
+                    className={`py-2 px-3 text-sm font-semibold rounded-lg border transition cursor-pointer ${
+                      modalPayType === "bank"
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    Bank
+                  </button>
+                </div>
               </div>
+
+              {/* Dynamic Bank Fields */}
+              {modalPayType === "bank" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-150 animate-fadeIn">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Transfer Type</label>
+                    <select
+                      value={modalBankType}
+                      onChange={(e) => setModalBankType(e.target.value as any)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-blue-500"
+                    >
+                      <option value="Bank Check">Bank Check</option>
+                      <option value="Fund Transfer">Fund Transfer</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Bank Name</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. DBBL, EBL, City Bank"
+                      value={modalBankName}
+                      onChange={(e) => setModalBankName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
                 <button
@@ -2632,6 +4336,140 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT TRANSACTION MODAL */}
+      {showEditModal && editingTransaction && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full border border-slate-200 overflow-hidden shadow-2xl animate-scaleIn">
+            <div className="bg-slate-900 p-6 text-white flex justify-between items-center">
+              <div>
+                <h4 className="font-display font-bold text-lg">Edit Transaction</h4>
+                <p className="text-xs text-slate-400">
+                  Modifying entry for <span className="text-blue-300 font-semibold">{editingTransaction.party_name}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowEditModal(false);
+                  setEditingTransaction(null);
+                }}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Transaction Date</label>
+                <input
+                  type="date"
+                  required
+                  value={editForm.date}
+                  onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                  className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Particulars (Description)</label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.particulars}
+                  onChange={(e) => setEditForm({ ...editForm, particulars: e.target.value })}
+                  className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Debit Amount (৳)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editForm.debit}
+                    onChange={(e) => setEditForm({ ...editForm, debit: e.target.value })}
+                    className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Credit Amount (৳)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editForm.credit}
+                    onChange={(e) => setEditForm({ ...editForm, credit: e.target.value })}
+                    className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              {(editingTransaction.entry_type === "goods" || editingTransaction.entry_type === "return" || editForm.quantity || editForm.rate) && (
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Quantity</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Optional"
+                      value={editForm.quantity}
+                      onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
+                      className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-white text-sm focus:outline-blue-500 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Rate (৳)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Optional"
+                      value={editForm.rate}
+                      onChange={(e) => setEditForm({ ...editForm, rate: e.target.value })}
+                      className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-white text-sm focus:outline-blue-500 font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono">Category / Entry Type</label>
+                <select
+                  value={editForm.entry_type}
+                  onChange={(e) => setEditForm({ ...editForm, entry_type: e.target.value as any })}
+                  className="w-full border border-slate-200 rounded-lg px-4 py-2 bg-slate-50 text-sm focus:bg-white focus:outline-blue-500"
+                >
+                  <option value="goods">Yarn Cargo / Goods</option>
+                  <option value="payment">Cash / Bank Payment</option>
+                  <option value="car_rent">Transport Rent</option>
+                  <option value="labour">Labour / Handling</option>
+                  <option value="return">Returned Yarn Goods</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingTransaction(null);
+                  }}
+                  className="px-4 py-2 text-slate-500 hover:text-slate-800 text-sm font-semibold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-5 py-2 rounded-lg text-sm transition cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

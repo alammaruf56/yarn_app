@@ -32,7 +32,7 @@ export interface Transaction {
   quantity?: number;
   unit?: "KG" | "LBS" | "BAG";
   rate?: number;
-  entry_type: "goods" | "car_rent" | "labour" | "payment";
+  entry_type: "goods" | "car_rent" | "labour" | "payment" | "return";
 }
 
 export interface DashboardStats {
